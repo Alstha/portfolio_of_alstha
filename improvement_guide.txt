@@ -1,0 +1,656 @@
+FAMILY CCTV
+Complete Improvement, Feature &amp; UI/UX Guide
+Version 2.0 Roadmap  •  June 2026
+Project
+Family CCTV — Self-hosted webcam monitoring app
+Stack
+Python / FastAPI / aiortc / OpenCV / WebRTC / Cloudflare
+Document scope
+Security fixes, architecture improvements, 20 new features, Android 9:16 UI/UX redesign
+Total features
+20 new features  •  8 security fixes  •  Full UI redesign
+  01    SECURITY IMPROVEMENTS
+1. Security Improvements
+The current app has solid foundations but several attack surfaces that must be hardened before exposing it to the internet. Each fix below explains the vulnerability, the risk, and the exact implementation.
+1.1  Login Throttling — Add Per-Username Lock
+Current state: The throttle tracks by IP address only. An attacker who rotates IPs (VPN hops, tor exit nodes, mobile data) can bypass the limit entirely and brute-force usernames.
+Fix — track by username hash, not just IP:
+# In app.py — add a username-keyed attempt counter alongside the IP counter
+failed_attempts_by_user: dict[str, int] = {}
+def check_rate_limit(username: str, ip: str):
+    key_user = hashlib.sha256(username.encode()).hexdigest()[:16]
+    if failed_attempts_by_user.get(key_user, 0) &gt;= 10:
+        raise HTTPException(429, &apos;Too many attempts for this username&apos;)
+    if failed_attempts_by_ip.get(ip, 0) &gt;= 20:
+        raise HTTPException(429, &apos;Too many attempts from this IP&apos;)
+!
+Why it matters
+Without per-username locking a single attacker on a VPN can try thousands of passwords. With both IP and username tracking, even rotating IPs cannot brute force a specific account.
+1.2  SameSite=Strict on Session Cookie
+The current session cookie does not explicitly set SameSite=Strict. This exposes the app to CSRF attacks where a malicious page causes the victim&apos;s browser to silently send authenticated requests.
+# In app.py — update the session middleware config
+app.add_middleware(SessionMiddleware,
+    secret_key=SECRET_KEY,
+    session_cookie=&apos;session&apos;,
+    same_site=&apos;strict&apos;,     # &lt;- add this
+    https_only=True,        # &lt;- add this (Cloudflare handles TLS)
+    max_age=86400)
+1.3  Secrets Not in Project Root
+Both .env and passkeys.local.json sit in the project root. If a developer accidentally pushes to GitHub or shares a zip, credentials and passkey private material leak.
+Create a secrets/ directory outside the project root: C:\Users\&lt;name&gt;\AppData\Local\FamilyCCTV\secrets\
+Point the app to it via a single SECRETS_DIR env var set at OS level (not in .env)
+Add .env, passkeys.local.json, and *.key to .gitignore with a pre-commit hook that blocks the push if they exist
+1.4  Camera Health Probe Endpoint
+If OpenCV fails to open the camera (another app holds the device, driver crash), the error propagates silently into the WebRTC negotiation. The viewer sees a black screen with no explanation.
+# New route in app.py
+@app.get(&apos;/health/camera&apos;)
+async def camera_health():
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    ok = cap.isOpened()
+    cap.release()
+    return {&apos;status&apos;: &apos;ok&apos; if ok else &apos;unavailable&apos;,
+            &apos;index&apos;: CAMERA_INDEX}
+The viewer page should call this before initiating WebRTC and show a friendly inline message (&quot;Camera not available — check that no other app is using it&quot;) instead of a stalled spinner.
+1.5  WebRTC Fallback Chain with UI Feedback
+When TURN fails, the viewer silently stalls. Users on mobile networks (CGNAT, symmetric NAT) experience this frequently. The fix is an explicit escalation chain with status messages visible in the UI.
+Attempt 1: Direct P2P (fastest, fails behind symmetric NAT)
+Attempt 2: STUN-assisted (works on most home networks)
+Attempt 3: TURN relay via Cloudflare Realtime
+Fallback: Serve MJPEG stream from /video endpoint (always works, higher latency)
+The viewer JS should update a status label at each step so the user knows what is happening rather than seeing a frozen camera icon.
+1.6  Session Expiry Notification via Server-Sent Events
+When the watchdog kills a stale WebRTC session, the browser gets no notification. The video freezes and the user has no idea whether to refresh or wait. Add an SSE channel:
+@app.get(&apos;/events&apos;)
+async def sse_events(request: Request):
+    async def generator():
+        while True:
+            event = await session_event_queue.get()
+            yield f&apos;data: {json.dumps(event)}\n\n&apos;
+    return StreamingResponse(generator(),
+        media_type=&apos;text/event-stream&apos;)
+The viewer subscribes to /events and shows a banner (&quot;Session expired — tap to reconnect&quot;) instead of a frozen screen.
+1.7  Video Message Size Enforcement + Auto-Cleanup
+The received_messages/ folder has no size cap and no cleanup policy. A viewer who sends many messages will silently fill the laptop disk.
+Enforce server-side max upload size (current .env.example has a limit var — make it strict in the route handler)
+On each new upload, delete messages older than 7 days
+Keep a max of 20 files — delete oldest if exceeded
+Return a 413 with a user-friendly JSON body, not a generic 500
+1.8  Input Validation on All Routes
+FastAPI&apos;s Pydantic models should validate every query param and JSON body field. Review all routes and ensure that string fields have max_length constraints, integers have ge/le bounds, and file uploads check MIME type against an allowlist (video/mp4, video/webm only).
+  02    ARCHITECTURE IMPROVEMENTS
+2. Architecture Improvements
+2.1  Async Camera Frame Buffer
+The current CameraManager reads frames synchronously. Under high CPU load (screenshot capture, video transcoding) the read loop can block and cause dropped frames or WebRTC jitter.
+Solution: run camera reads in a thread pool and push frames into an asyncio.Queue.
+import asyncio, concurrent.futures
+class CameraManager:
+    def __init__(self):
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=5)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    async def _read_loop(self):
+        loop = asyncio.get_event_loop()
+        while self._running:
+            frame = await loop.run_in_executor(self._executor, self._cap.read)
+            if not self._queue.full():
+                await self._queue.put(frame)
+2.2  Config Dataclass Instead of Bare ENV Reads
+Currently os.getenv() calls are scattered throughout app.py. This makes it easy to miss a missing var at startup and hard to see all config in one place.
+from dataclasses import dataclass
+from environs import Env
+@dataclass
+class Config:
+    username: str
+    password: str
+    camera_index: int = 0
+    frame_width: int = 854
+    frame_height: int = 480
+    jpeg_quality: int = 75
+    max_message_files: int = 20
+    session_secret: str = &apos;&apos;
+def load_config() -&gt; Config:
+    env = Env()
+    env.read_env()
+    return Config(username=env.str(&apos;USERNAME&apos;), ...)
+2.3  Structured Logging
+Replace print() statements with Python&apos;s logging module configured with structured JSON output. This makes log filtering trivial (grep for session_id, event_type) and enables future log shipping to a file or remote sink.
+import logging, json
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({&apos;ts&apos;: self.formatTime(record),
+            &apos;level&apos;: record.levelname, &apos;msg&apos;: record.getMessage(),
+            **getattr(record, &apos;extra&apos;, {})})
+2.4  Video Message Transcoding on Receipt
+Uploaded video messages are saved as-is. If the viewer&apos;s browser records in a codec the laptop&apos;s media player does not support (VP9 webm on Windows Media Player), playback silently fails.
+Transcode on receipt using ffmpeg:
+import subprocess
+def transcode(src: Path, dst: Path):
+    subprocess.run([
+        &apos;ffmpeg&apos;, &apos;-i&apos;, str(src),
+        &apos;-c:v&apos;, &apos;libx264&apos;, &apos;-c:a&apos;, &apos;aac&apos;,
+        &apos;-movflags&apos;, &apos;+faststart&apos;,  # enables progressive web playback
+        str(dst)], check=True)
+  03    20 NEW FEATURES
+3. New Feature Roadmap
+Each feature below includes: what it does, exactly why it improves the app, and the implementation approach. Features are sorted by impact. Priority and effort ratings follow.
+#
+Feature
+Priority
+Effort
+One-line reason
+1
+Motion alert + push notification
+High
+Medium
+Transforms pull-based camera into an active alert system
+2
+Two-way audio
+High
+Medium
+Lets viewer speak through laptop speakers over WebRTC
+3
+On-demand clip save (30-second buffer)
+High
+Medium
+Capture evidence without continuous recording
+4
+Battery &amp; system status panel
+Medium
+Low
+Know if laptop will shut off before starting a session
+5
+Night vision / low-light mode
+Medium
+Low
+Usable in dark rooms without external lighting
+6
+Guest access with time-limited token
+Medium
+Low
+Share view-only access without exposing the password
+7
+Multi-camera support
+Medium
+High
+Use multiple webcams or IP cameras simultaneously
+8
+Privacy mode / physical shutter
+High
+Low
+Disable camera via app when not needed
+9
+Viewer session log
+Medium
+Low
+Audit who accessed the camera and when
+10
+Webhook notifications (Telegram/Discord)
+Medium
+Low
+Push motion alerts to existing chat apps
+11
+PIN-protected quick access
+Medium
+Low
+Faster login on trusted phone without passkey
+12
+Zoom &amp; pan (digital PTZ)
+Low
+Low
+Inspect details without changing the camera position
+13
+Snapshot gallery with search
+Medium
+Medium
+Browse and search all screenshots in the viewer
+14
+Scheduled camera-on times
+Low
+Medium
+Automatically activate/deactivate on a schedule
+15
+Viewer presence indicator on laptop
+Medium
+Low
+Show on laptop screen that someone is watching
+16
+Bandwidth / quality adaptive stream
+Medium
+Medium
+Reduce quality on slow connections automatically
+17
+Dark/light theme toggle in viewer
+Low
+Low
+Reduce eye strain in different environments
+18
+Video message inbox on laptop
+Medium
+Low
+Organised inbox instead of a flat folder
+19
+Emergency SOS button
+High
+Low
+One-tap alert to a secondary contact with location
+20
+Offline mode indicator
+Medium
+Low
+Clear UI state when laptop loses internet
+Feature 1 — Motion Alert &amp; Push Notification
+What it does: When no viewer is actively watching, a background thread performs frame differencing. If pixel change exceeds a threshold, the server sends a Web Push notification to the viewer&apos;s phone.
+Why: Right now the app is entirely pull-based. The viewer must open the app and manually check. Motion detection converts the app into a genuine security tool — you get notified without doing anything.
+Implementation:
+Install pywebpush: pip install pywebpush
+Add POST /subscribe endpoint that stores the browser&apos;s PushSubscription object
+In CameraManager, run a background diff loop when viewer_count == 0
+Compare grayscale frames: cv2.absdiff() followed by cv2.threshold()
+If changed_pixels / total_pixels &gt; 0.02 (2% threshold), call send_push()
+Store VAPID keys in .env (generate once with pywebpush)
+Add cooldown: do not send more than one alert per 60 seconds
+ℹ
+Sensitivity tip
+Start with a 2% pixel change threshold. Expose this as a slider in the viewer settings tab so the user can tune it to their environment (a fan blowing curtains vs a person walking).
+Feature 2 — Two-Way Audio
+What it does: Adds a microphone track from the viewer&apos;s browser to the WebRTC connection. The laptop plays the viewer&apos;s voice through its speakers in real time.
+Why: Video-only monitoring is passive. Two-way audio lets a parent call out to a child, reassure a pet, or have a conversation. aiortc already handles this — it is largely a JS-side change.
+Implementation:
+In viewer.html: navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+Add the audio track to the existing RTCPeerConnection before the offer
+On the server (app.py), the incoming audio track is already received by aiortc
+Route the audio to the system speaker using pyaudio: pip install pyaudio
+Add a mute/unmute button in the viewer UI (mic icon, bottom sheet)
+Add a speaker volume indicator on the viewer so the user knows audio is live
+Feature 3 — On-Demand 30-Second Clip Save
+What it does: The server maintains a rolling 30-second frame buffer in memory. When the viewer taps &apos;Save Clip&apos;, the buffer is flushed to an MP4 file on disk.
+Why: Users want to save evidence of something they just saw without committing to continuous recording (which fills disks and raises privacy concerns). The ring-buffer approach gives the best of both.
+Implementation:
+Use a collections.deque(maxlen=900) at 30fps — this holds exactly 30 seconds
+Each entry is an encoded JPEG or raw numpy frame from CameraManager
+When save is triggered: flush deque, write with cv2.VideoWriter to MP4
+Store in saved_clips/ directory (separate from received_messages/)
+Return the filename and a download link in the JSON response
+Add the clip to the Clips tab in the viewer UI
+Feature 4 — Battery &amp; System Status Panel
+What it does: A /status/system endpoint returns laptop battery %, CPU load, RAM usage, disk free space, and network interface status.
+Why: If the viewer starts a live session and the laptop is at 5% battery with no charger, the session will die mid-stream. Showing system health upfront lets the viewer make an informed decision.
+Implementation:
+import psutil  # pip install psutil
+@app.get(&apos;/status/system&apos;)
+async def system_status():
+    batt = psutil.sensors_battery()
+    return {
+        &apos;battery_pct&apos;: round(batt.percent) if batt else None,
+        &apos;plugged_in&apos;:  batt.power_plugged if batt else True,
+        &apos;cpu_pct&apos;:     psutil.cpu_percent(interval=0.5),
+        &apos;ram_pct&apos;:     psutil.virtual_memory().percent,
+        &apos;disk_free_gb&apos;:round(psutil.disk_usage(&apos;/&apos;).free / 1e9, 1),
+    }
+Show these as four metric cards on the Idle screen (battery icon, wifi icon, CPU icon, disk icon) that refresh every 30 seconds.
+Feature 5 — Night Vision / Low-Light Mode
+What it does: A toggle in the viewer switches the camera capture to a low-light preset: slower shutter (higher exposure), boosted ISO/gain, and optional grayscale mode.
+Why: Most of the use-cases for family monitoring (checking on a sleeping child, a pet at night) happen in low-light. Default camera settings produce dark, noisy frames.
+Implementation:
+Add a /camera/mode endpoint that accepts &apos;day&apos; or &apos;night&apos;
+Night mode: cap.set(cv2.CAP_PROP_EXPOSURE, -6), cap.set(cv2.CAP_PROP_GAIN, 64)
+Optional: convert to grayscale for cleaner output in near-darkness
+Return the current mode in /health/camera so the viewer UI can show the active mode
+Feature 6 — Guest Access with Time-Limited Token
+What it does: An authenticated user can generate a signed URL that grants view-only camera access without the main password. The URL expires after a configurable window (default 1 hour).
+Why: The main use-case is &quot;I want grandma to check in on the kids without giving her our master password&quot;. Currently there is no way to do this.
+from itsdangerous import TimestampSigner
+signer = TimestampSigner(SECRET_KEY)
+@app.post(&apos;/guest/token&apos;)
+async def create_guest_token(expiry_minutes: int = 60):
+    token = signer.sign(&apos;guest&apos;).decode()
+    url = f&apos;{BASE_URL}/guest/{token}&apos;
+    return {&apos;url&apos;: url, &apos;expires_in_minutes&apos;: expiry_minutes}
+@app.get(&apos;/guest/{token}&apos;)
+async def guest_viewer(token: str):
+    signer.unsign(token, max_age=expiry_minutes*60)  # raises if expired
+    # serve read-only viewer template (no bell, no screenshot, no message)
+Feature 7 — Multi-Camera Support
+What it does: Support more than one camera index. The viewer UI shows a camera selector; switching tabs changes which stream is shown.
+Why: Many laptops have both a built-in webcam and a USB webcam. Users might also add an RTSP IP camera. Supporting multiple feeds multiplies the app&apos;s usefulness.
+Refactor CameraManager into CameraPool — a dict of index → CameraManager
+Each camera has its own WebRTC peer connection and frame buffer
+Add GET /cameras to list available/active cameras
+In the viewer, show camera tabs at the top of the video area
+For RTSP cameras: accept an rtsp:// URL as a camera &apos;index&apos; (cv2.VideoCapture handles it)
+Feature 8 — Privacy Mode / Software Shutter
+What it does: A toggle in the viewer (or an endpoint hit from a laptop keyboard shortcut) completely stops the camera and shows a &apos;Camera paused&apos; slate to any viewer who connects.
+Why: Consent and trust. The person near the laptop should always be able to pause monitoring without having to shut the server down entirely. This is especially important in shared household contexts.
+Add a /camera/privacy endpoint: sets a privacy_mode = True flag in CameraManager
+When privacy_mode is True, CameraManager returns a static &apos;Camera paused&apos; JPEG instead of live frames
+Show the privacy state in the viewer UI: grey camera icon + &apos;Paused by laptop user&apos;
+Add a global keyboard shortcut (e.g. Ctrl+Shift+P) registered with keyboard module on the laptop
+Feature 9 — Viewer Session Log
+What it does: Every login, session start, action (screenshot, ring, message), and logout is appended to a structured audit log. The viewer can browse the log in a History tab.
+Why: Trust. All parties should be able to see when the camera was accessed. A transparent audit log prevents the app from feeling invasive and creates accountability.
+# append to session_log.jsonl on each event
+def log_event(event_type: str, detail: dict = {}):
+    entry = {&apos;ts&apos;: datetime.utcnow().isoformat(),
+             &apos;type&apos;: event_type, **detail}
+    with open(&apos;session_log.jsonl&apos;, &apos;a&apos;) as f:
+        f.write(json.dumps(entry) + &apos;\n&apos;)
+Feature 10 — Webhook Notifications (Telegram / Discord)
+What it does: Motion events and manual actions (bell ring, screenshot) can be routed to a Telegram bot or Discord webhook. A short message with a thumbnail is sent automatically.
+Why: Many users already live in Telegram or Discord. Push notifications are good, but a message with a thumbnail in an existing chat is even more actionable.
+import httpx
+async def send_telegram_alert(caption: str, image_bytes: bytes):
+    url = f&apos;https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto&apos;
+    async with httpx.AsyncClient() as client:
+        await client.post(url, data={&apos;chat_id&apos;: CHAT_ID,
+            &apos;caption&apos;: caption},
+            files={&apos;photo&apos;: (&apos;snap.jpg&apos;, image_bytes, &apos;image/jpeg&apos;)})
+Feature 11 — PIN-Protected Quick Access
+What it does: After the first full login on a device, the user can optionally set a 4-6 digit PIN. Subsequent logins on that device only require the PIN rather than the full username/password.
+Why: Typing a long password on a phone keyboard while checking in quickly on a child is friction. A PIN drastically reduces time to first frame.
+Store the PIN hash (bcrypt) linked to the device fingerprint (canvas fingerprint + screen size)
+PIN entry shows a number-pad UI on mobile (no keyboard)
+After 3 wrong PIN attempts, fall back to full password login
+PIN expires after 30 days and requires re-authentication
+Feature 12 — Digital PTZ (Pan/Tilt/Zoom)
+What it does: Software-based crop and zoom of the camera frame. The viewer can pinch-to-zoom on mobile or use +/- buttons to zoom into a region of the frame.
+Why: Physical cameras cannot pan or tilt, but a software crop can simulate it. If the camera covers a room, the viewer can zoom in on a specific area without physically adjusting the camera.
+def crop_and_zoom(frame, cx, cy, zoom):
+    h, w = frame.shape[:2]
+    crop_w, crop_h = int(w / zoom), int(h / zoom)
+    x1 = max(0, int(cx - crop_w/2))
+    y1 = max(0, int(cy - crop_h/2))
+    cropped = frame[y1:y1+crop_h, x1:x1+crop_w]
+    return cv2.resize(cropped, (w, h))
+Feature 13 — Snapshot Gallery with Search
+What it does: All screenshots are stored with a timestamp filename. The viewer&apos;s Clips tab shows a scrollable gallery grid. Thumbnails are generated on receipt. Search filters by date range.
+Why: Currently screenshots are just dumped to disk with no way to browse or find them from the viewer. A gallery makes past snapshots actually useful.
+On screenshot: save full res + generate 200x150 thumbnail with Pillow
+Add GET /screenshots?from=&amp;to=&amp;limit= endpoint returning JSON list
+Add GET /screenshots/{filename}/thumb for the thumbnail
+In the viewer: infinite-scroll grid, tap to open full res, long-press to delete
+Feature 14 — Scheduled Camera-On Times
+What it does: The user sets a schedule (e.g. weekdays 08:00–18:00) in the settings tab. Outside those hours the camera shows the &apos;Privacy mode&apos; slate even if a viewer connects.
+Why: Reduces the feeling of constant surveillance. Parents might only want monitoring during school hours. A schedule makes the consent model explicit and predictable.
+Store schedule as JSON: [{days: [0,1,2,3,4], start: &apos;08:00&apos;, end: &apos;18:00&apos;}]
+CameraManager checks the schedule before opening the camera
+Show &apos;Monitoring scheduled for...&apos; on the idle screen outside active hours
+Use APScheduler (pip install apscheduler) to handle timezone-aware scheduling
+Feature 15 — Viewer Presence Indicator on Laptop
+What it does: When a viewer starts a live session, a small semi-transparent overlay appears in the corner of the laptop screen showing a green dot and &apos;Being watched&apos;.
+Why: The person near the laptop should always know when they are being observed. This is a core consent principle. It also prevents the uncomfortable situation of being watched without knowing it.
+Use tkinter or a Windows-native tray notification when session starts
+The overlay is always-on-top with 30% opacity so it is visible but not disruptive
+Dismiss automatically 3 seconds after the session ends
+Feature 16 — Adaptive Bitrate Streaming
+What it does: Monitor the WebRTC connection&apos;s round-trip time and packet loss via RTCPeerConnection.getStats(). Automatically reduce frame size and JPEG quality on poor connections.
+Why: A viewer on 4G will frequently experience bandwidth drops. Without adaptation, the stream freezes. With adaptation, it degrades gracefully to a smaller but still viewable stream.
+Poll getStats() every 5 seconds in the viewer JS
+If RTT &gt; 300ms or packetLoss &gt; 5%, send POST /camera/quality?level=low
+Server switches JPEG quality to 40 and resolution to 640x360
+If conditions improve: automatically step back up through medium and high presets
+Feature 17 — Dark / Light Theme Toggle
+What it does: A sun/moon icon in the viewer header toggles between a dark (default) and light theme. Preference is saved to localStorage.
+Why: Checking the camera in daylight against a white wall means a dark UI creates eye strain. Simple CSS variable swapping is a 30-minute implementation with meaningful UX improvement.
+// In viewer.html
+const themes = {
+  dark:  { &apos;--bg&apos;: &apos;#0a0a0a&apos;, &apos;--fg&apos;: &apos;#f0f0f0&apos;, &apos;--card&apos;: &apos;#1a1a1a&apos; },
+  light: { &apos;--bg&apos;: &apos;#f5f5f5&apos;, &apos;--fg&apos;: &apos;#1a1a1a&apos;, &apos;--card&apos;: &apos;#ffffff&apos; }
+};
+function applyTheme(name) {
+  Object.entries(themes[name]).forEach(([k,v]) =&gt;
+    document.documentElement.style.setProperty(k, v));
+  localStorage.setItem(&apos;theme&apos;, name);
+}
+Feature 18 — Video Message Inbox with Playback
+What it does: Replace the flat received_messages/ folder with a structured inbox. Messages appear in a list with sender (always &apos;Viewer&apos;), timestamp, duration, and watched/unwatched status.
+Why: Currently messages are just files. There is no indication that a new message arrived (except the file appearing), no read state, and no organised UI. An inbox makes the feature feel intentional.
+Store message metadata in messages.json alongside the video files
+Add GET /messages endpoint returning list with metadata
+Add PATCH /messages/{id}/read to mark as read
+Add DELETE /messages/{id} to remove
+Show unread badge count on the video message button in the viewer
+Feature 19 — Emergency SOS Button
+What it does: A long-press on a dedicated SOS button in the viewer sends an alert (with current screenshot and GPS coordinates if available) to a pre-configured secondary contact via email or Telegram.
+Why: The app is used for family safety. If the viewer sees something alarming, they need a way to escalate beyond the app immediately. A one-tap emergency alert is a meaningful safety feature.
+Configure SOS_EMAIL and SOS_TELEGRAM_CHAT_ID in .env
+On SOS trigger: capture screenshot, get viewer&apos;s browser geolocation, send via SMTP + Telegram
+Require long-press (1.5 seconds) to prevent accidental triggers
+Show a 3-second countdown with &apos;Cancel&apos; option before sending
+Log the SOS event with timestamp in the audit log
+Feature 20 — Offline / Connectivity Status Indicator
+What it does: The viewer detects its own internet connectivity and the laptop&apos;s reachability separately. It shows distinct states: &apos;Your internet is offline&apos;, &apos;Laptop is unreachable&apos;, and &apos;Connected&apos;.
+Why: Currently when the viewer cannot reach the server, it shows a loading spinner with no context. Users do not know if their own connection is down or if the laptop lost power. Distinct states reduce anxiety.
+// In viewer.html
+window.addEventListener(&apos;offline&apos;, () =&gt; showState(&apos;your-internet-offline&apos;));
+window.addEventListener(&apos;online&apos;,  () =&gt; pingServer());
+async function pingServer() {
+  try {
+    await fetch(&apos;/health&apos;, { signal: AbortSignal.timeout(3000) });
+    showState(&apos;connected&apos;);
+  } catch {
+    showState(&apos;server-unreachable&apos;);  // internet OK, laptop gone
+  }
+}
+  04    UI/UX REDESIGN — ANDROID 9:16
+4. UI/UX Redesign Guide
+The current viewer.html is a desktop-first layout. On a 9:16 Android screen in portrait mode, controls are small, the video does not fill the screen, and the action buttons are scattered. This section defines the complete mobile-first redesign.
+4.1  Core Design Principles
+1
+Thumb zone first
+All interactive controls must sit in the bottom 40% of the screen (below the midpoint). Nothing important above the midpoint — the user&apos;s thumb cannot comfortably reach there in one-handed use.
+2
+Video fills everything
+The camera feed should fill the entire viewport behind all other UI elements. Controls overlay the video with semi-transparent backgrounds, never block it with opaque panels.
+3
+Dark theme is default
+Security camera apps are checked at night, in dark rooms, during anxiety. A dark UI (#0a0a0a base) is gentler on the eyes and feels more appropriate for the use case.
+4
+Minimal tap targets — 48px minimum
+All buttons must be at least 48x48px per Android Material guidelines. The current layout has several buttons that are far too small for reliable tapping.
+5
+One primary action per screen state
+In Live mode: the primary action is Stop. In Idle mode: the primary action is Start. Do not present five equal-weight buttons. Visual hierarchy must be immediately obvious.
+4.2  Screen Architecture — Five States
+State 1: Login screen
+Full-screen dark background (#090909)
+Centered app icon (home-shield, 52px, green-tinted card)
+App name in 20px medium weight, subtitle in 12px muted
+Username and password fields with floating labels (not placeholder text)
+Primary &apos;Sign in&apos; button: full width, green tinted background, green text
+Divider line with &apos;or&apos; label
+Passkey button: full width, outlined, fingerprint icon + &apos;Use passkey&apos;
+No logo image — icon only. No decorative background patterns.
+State 2: Idle / Connect screen
+Top half: camera location name, connection status indicator, last-seen time
+Center: large circular start button (80px, green ring, play icon inside)
+Below button: 2x2 grid of system status cards (battery, wifi, CPU, disk)
+Bottom navigation bar: Live | Clips | Alerts | Settings tabs
+Status cards auto-refresh every 30 seconds via polling /status/system
+State 3: Live view screen
+Camera feed fills 100% of viewport, portrait crop
+Top overlay: translucent gradient, LIVE badge (green dot + LIVE text), zoom and fullscreen buttons
+Right edge: floating zoom +/- strip (26px circle buttons, semi-transparent)
+Bottom sheet (draggable up for more controls): sheet handle pill, 4 action buttons in a row
+Action buttons: Stop (red-tinted), Ring (amber-tinted), Screenshot (neutral), Message (neutral)
+Each action button: icon top + label below, rounded card shape, 60px tall
+Motion sensitivity overlay (appears after long-press on video): slider to adjust threshold
+State 4: Alerts tab
+Full-screen list, no header padding waste
+Each alert row: 36x28 thumbnail or event icon on left, event type bold + timestamp muted on right, chevron
+Color-coded icons: amber for motion, purple for bell, green for session start, red for SOS
+Pull-to-refresh updates the list
+Empty state: camera icon + &apos;No alerts yet&apos; centered in screen
+State 5: Settings tab
+Grouped sections with muted section headers (14px caps label)
+Section: Account — username display, change password, manage passkeys
+Section: Camera — camera index picker, night mode toggle, schedule setup
+Section: Notifications — motion alerts toggle, sensitivity slider, webhook URL field
+Section: Privacy — privacy mode toggle, session log link, guest token generator
+Section: About — version number, Cloudflare status, server health
+4.3  Bottom Navigation
+Use a 4-tab bottom nav bar (not a hamburger menu). Tab labels below icons. Active tab: green icon + green label. Inactive: white 30% opacity. Tab bar background: #0a0a0a with a 0.5px top border.
+4.4  Typography &amp; Spacing
+Use the system font stack (-apple-system, Roboto, Arial) — no custom web fonts needed. This keeps the UI fast on slow connections.
+Element
+Size / Weight
+Notes
+Screen title
+20px / 500
+One per screen — camera name or tab name
+Section header
+13px / 400 CAPS
+Settings groupings — muted 40% opacity
+Body text
+15px / 400
+Alert descriptions, status messages
+Muted text
+13px / 400
+Timestamps, sub-labels — 30% opacity
+Button label
+13px / 500
+Inside action buttons, always uppercase
+Status badge
+11px / 600
+LIVE badge text — tight letter-spacing
+Metric card value
+22px / 500
+Battery %, CPU % in system status cards
+4.5  Color System
+Role
+Hex
+Usage
+Base background
+#0a0a0a
+Screen backgrounds
+Card surface
+#1a1a1a
+Bottom sheets, settings rows
+Border subtle
+rgba(255,255,255,0.08)
+Card edges, dividers
+Accent green
+#4ade80
+Live dot, active tab, primary CTA
+Accent amber
+#fbbf24
+Ring button, warnings
+Accent red
+#f87171
+Stop button, danger states
+Text primary
+rgba(255,255,255,0.85)
+Main labels and headings
+Text muted
+rgba(255,255,255,0.35)
+Timestamps, sub-labels
+Overlay tint
+rgba(0,0,0,0.55)
+Gradient behind top-bar controls
+4.6  Interaction Patterns
+Swipe-to-dismiss bottom sheet:
+Bottom sheet starts at 30% height (action buttons visible)
+Drag handle at top — pull up to 70% height to reveal advanced controls (quality picker, clip length, zoom presets)
+Drag down to collapse — never fully dismisses (action buttons always reachable)
+Long-press behaviours:
+Long-press video: opens motion sensitivity overlay with a circular slider
+Long-press screenshot button: switches to burst mode (takes 5 shots)
+Long-press SOS button: triggers countdown (not regular press — prevents accidents)
+Pinch-to-zoom on video:
+Handled entirely in JS with touch event listeners (no native video zoom)
+Sends zoom level and pan offset to server as query params on the next frame request
+Reset: double-tap to return to 1x
+Haptic feedback (Android):
+Short vibration (10ms) on bell trigger confirmation
+Double vibration (10ms, 50ms gap, 10ms) on successful screenshot
+Long vibration (500ms) on SOS button activation
+// navigator.vibrate is available in Android Chrome
+navigator.vibrate([10, 50, 10]);  // double pulse
+  05    DEPLOYMENT &amp; PERFORMANCE
+5. Deployment Improvements
+5.1  PWA Manifest Improvements
+The app already has a manifest.json but it can be improved to give a much better &apos;installed app&apos; experience on Android:
+Set display: &apos;standalone&apos; (already set — good)
+Add screenshots array to the manifest so the Play Store / Chrome install prompt shows preview images
+Set orientation: &apos;portrait&apos; to prevent accidental landscape rotation during quick checks
+Add shortcuts array with &apos;Start live view&apos; and &apos;Ring bell&apos; direct actions (visible on long-press of homescreen icon on Android)
+Set background_color and theme_color to #0a0a0a so the splash screen matches the app
+// manifest.json additions
+{
+  &quot;orientation&quot;: &quot;portrait&quot;,
+  &quot;theme_color&quot;: &quot;#0a0a0a&quot;,
+  &quot;background_color&quot;: &quot;#0a0a0a&quot;,
+  &quot;shortcuts&quot;: [
+    { &quot;name&quot;: &quot;Start live view&quot;, &quot;url&quot;: &quot;/?action=start&quot;,
+      &quot;icons&quot;: [{&quot;src&quot;: &quot;/static/icon-96.png&quot;, &quot;sizes&quot;: &quot;96x96&quot;}] },
+    { &quot;name&quot;: &quot;Ring bell&quot;,      &quot;url&quot;: &quot;/?action=ring&quot;,
+      &quot;icons&quot;: [{&quot;src&quot;: &quot;/static/icon-96.png&quot;, &quot;sizes&quot;: &quot;96x96&quot;}] }
+  ]
+}
+5.2  Startup Time
+The server currently imports OpenCV, aiortc, mss, and webauthn at startup. On a slow laptop this can take 3-5 seconds before the first request is served. Defer heavy imports:
+# Lazy import pattern
+_cv2 = None
+def get_cv2():
+    global _cv2
+    if _cv2 is None:
+        import cv2 as _cv2
+    return _cv2
+This brings the server to &apos;ready to accept login&apos; state within 0.5 seconds. The heavier modules load the first time a camera session is requested.
+5.3  Windows Service Installation
+Currently the app must be manually started via PowerShell. Add a one-command install as a Windows service so it starts automatically at boot:
+# Install NSSM (Non-Sucking Service Manager) then:
+nssm install FamilyCCTV python app.py
+nssm set FamilyCCTV AppDirectory C:\Users\&lt;user&gt;\family_cctv_project
+nssm set FamilyCCTV AppEnvironmentExtra PATH=%PATH%
+nssm start FamilyCCTV
+Add Uninstall-FamilyCctvService.ps1 to the scripts/ directory.
+5.4  Automated Cloudflare Tunnel Restart
+The current Start-CloudflareQuickTunnel.ps1 launches the tunnel but does not restart it if it crashes. Add a watchdog loop:
+# In Start-CloudflareQuickTunnel.ps1
+while ($true) {
+    $proc = Start-Process cloudflared -ArgumentList &apos;tunnel --url http://localhost:8000&apos; -PassThru
+    $proc.WaitForExit()
+    Write-Host &quot;Tunnel exited (code $($proc.ExitCode)) — restarting in 5s&quot;
+    Start-Sleep 5
+}
+  06    QUICK WINS — UNDER 1 HOUR EACH
+6. Quick Wins
+These are small improvements that take less than an hour to implement but have noticeable impact on the user experience.
+#
+Change
+Why
+1
+Add Content-Security-Policy header with explicit directives
+Prevents XSS if an attacker injects HTML via a future bug
+2
+Show camera resolution and FPS in viewer top bar
+Users can see if the camera is degraded without guessing
+3
+Add &apos;Copy invite link&apos; button next to guest token
+One tap to share the guest URL via any messenger
+4
+Add favicon using the app icon
+Browser tab is identifiable — currently shows default favicon
+5
+Add keyboard shortcuts for desktop viewers (S=screenshot, R=ring, Esc=stop)
+Power users can operate the app without touching the mouse
+6
+Show session duration counter in top bar (00:04:32 live)
+Users know how long the session has been running
+7
+Add &apos;Last screenshot: 2 min ago&apos; label under screenshot button
+Contextual feedback without navigating to gallery
+8
+Auto-hide top controls after 4s of no interaction
+Full video area when idle — controls reappear on any touch
+9
+Add &apos;Open in new tab&apos; link for MJPEG debug stream
+Easier debugging without command line
+10
+Round all JPEG quality values in /status responses to integers
+Prevents ugly floats like &apos;74.99998&apos; in the UI
+Document prepared by: Claude (Anthropic)
+For project: Family CCTV — Private self-hosted monitoring app
+Total recommendations: 8 security fixes  •  4 architecture improvements  •  20 new features  •  Full UI/UX redesign  •  10 quick wins
+✔
+Implementation order recommendation
+Start with Section 1 (security) before adding any new features. A public-facing camera app with weak authentication is a serious risk. Security first, features second.

@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="ne">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>परिवार सुरक्षा - Smart Home Dashboard</title>
+  <meta name="theme-color" content="#05070a">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🛡️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-display: 'Fraunces', 'Noto Sans Devanagari', serif;
+      --font-ui: 'Inter', 'Noto Sans Devanagari', sans-serif;
+
+      --ink: #05070a;
+      --panel: rgba(255, 255, 255, 0.03);
+      --panel-strong: rgba(255, 255, 255, 0.06);
+      --line: rgba(240, 242, 248, 0.1);
+      --line-soft: rgba(240, 242, 248, 0.05);
+
+      --text: #f0f2f8;
+      --text-muted: rgba(240, 242, 248, 0.5);
+
+      --accent: #10b981;
+      --accent-deep: #059669;
+      --accent-glow: rgba(16, 185, 129, 0.25);
+
+      --amber: #f2b66d;
+      --amber-glow: rgba(242, 182, 109, 0.25);
+
+      --ember: #f87171;
+      --ember-glow: rgba(248, 113, 113, 0.25);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { font-family: var(--font-ui); background: var(--ink); color: var(--text); overflow-x: hidden; min-height: 100vh; min-height: 100dvh; padding-bottom: 40px; }
+    
+    .dashboard-layout { max-width: 900px; margin: 0 auto; padding: 24px; padding-top: env(safe-area-inset-top, 24px); }
+
+    /* Top Navigation */
+    .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    
+    .logo-container { display: flex; align-items: center; gap: 12px; }
+    .logo-icon { width: 36px; height: 36px; background: var(--panel-strong); border: 1px solid var(--line); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+    .logo-icon svg { width: 20px; height: 20px; fill: none; stroke: var(--accent); stroke-width: 2; }
+    .logo-text { font-family: var(--font-display); font-size: 1.25rem; font-weight: 600; letter-spacing: 0.01em; }
+    
+    .top-actions { display: flex; align-items: center; gap: 12px; }
+    .nav-pill { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.8rem; color: var(--text-muted); cursor: pointer; transition: all 0.2s; }
+    .nav-pill:hover { background: var(--panel-strong); color: var(--text); }
+    .nav-pill svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; }
+    .nav-pill.charging { color: var(--accent); }
+
+    /* Video Hero Section */
+    .video-hero { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 28px; border: 1px solid var(--line); overflow: hidden; margin-bottom: 32px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+    
+    .video-feed { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; transition: filter 0.3s; }
+    
+    .video-placeholder { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #000; }
+    .video-placeholder svg { width: 40px; height: 40px; stroke: var(--text-muted); opacity: 0.5; stroke-width: 1.5; fill: none; }
+    .video-placeholder p { color: var(--text-muted); font-size: 0.95rem; font-weight: 500; }
+
+    /* Video Overlays */
+    .video-overlay-top { position: absolute; top: 16px; left: 16px; right: 16px; z-index: 10; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
+    .video-overlay-bottom { position: absolute; bottom: 16px; right: 16px; z-index: 10; display: flex; gap: 12px; pointer-events: none; }
+
+    .status-badge { background: rgba(0,0,0,0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); border-radius: 999px; padding: 6px 12px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; pointer-events: auto; }
+    .status-badge.offline { color: var(--text-muted); }
+    .status-badge.live { color: var(--accent); background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); }
+    .status-badge.live::before { content: ""; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5); } 70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }
+
+    .filter-wrapper { background: rgba(0,0,0,0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); border-radius: 999px; padding: 4px 12px; display: flex; align-items: center; pointer-events: auto; }
+    .filter-select { background: transparent; border: none; color: var(--text); outline: none; font-family: var(--font-ui); font-size: 0.8rem; font-weight: 600; appearance: none; -webkit-appearance: none; padding-right: 12px; cursor: pointer; }
+    .filter-select option { background: #0c1018; }
+    .filter-wrapper::after { content: "▾"; font-size: 0.7rem; color: var(--text-muted); margin-left: -6px; pointer-events: none; }
+
+    .fab { width: 56px; height: 56px; border-radius: 28px; background: var(--text); color: #000; border: none; display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 25px rgba(0,0,0,0.5); cursor: pointer; pointer-events: auto; transition: transform 0.2s, background 0.2s; }
+    .fab:active { transform: scale(0.9); }
+    .fab.active { background: var(--ember); color: white; box-shadow: 0 10px 25px var(--ember-glow); }
+    .fab svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .fab .spinner { border: 3px solid rgba(0,0,0,0.1); border-top-color: currentColor; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+
+    /* Smart Home Grid */
+    .section-title { font-family: var(--font-display); font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+
+    .control-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 32px; }
+    @media (min-width: 600px) { .control-grid { grid-template-columns: repeat(4, 1fr); } }
+
+    .control-card { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; min-height: 130px; cursor: pointer; transition: all 0.2s; position: relative; overflow: hidden; }
+    .control-card:active { transform: scale(0.96); background: var(--panel-strong); }
+    
+    .card-icon { width: 44px; height: 44px; border-radius: 50%; background: var(--line-soft); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; transition: background 0.2s; }
+    .card-icon svg { width: 20px; height: 20px; stroke: var(--text); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    
+    .card-title { font-size: 0.95rem; font-weight: 600; color: var(--text); line-height: 1.2; }
+    .card-subtitle { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+
+    /* Themed Cards */
+    .control-card.walkie.active { border-color: var(--amber); background: rgba(242, 182, 109, 0.05); }
+    .control-card.walkie.active .card-icon { background: var(--amber); }
+    .control-card.walkie.active .card-icon svg { stroke: #000; }
+    .control-card.walkie.active .card-title { color: var(--amber); }
+
+    .control-card.danger:hover { border-color: var(--ember); background: rgba(248, 113, 113, 0.05); }
+    .control-card.danger .card-icon { background: rgba(248, 113, 113, 0.1); }
+    .control-card.danger .card-icon svg { stroke: var(--ember); }
+
+    .control-card.large { grid-column: 1 / -1; min-height: auto; flex-direction: row; align-items: center; padding: 16px 20px; }
+    .control-card.large .card-icon { margin-bottom: 0; margin-right: 16px; width: 38px; height: 38px; }
+    .control-card.large .card-content { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    
+    /* TTS Input */
+    .tts-input-row { display: flex; gap: 8px; flex: 1; max-width: 400px; }
+    .tts-input-row input { flex: 1; background: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; color: var(--text); outline: none; font-family: var(--font-ui); font-size: 0.9rem; transition: border 0.2s; min-width: 0; }
+    .tts-input-row input:focus { border-color: var(--accent); }
+    .tts-input-row button { background: var(--text); color: var(--ink); font-weight: 600; border: none; border-radius: 12px; padding: 0 16px; cursor: pointer; transition: transform 0.2s; flex-shrink: 0; }
+    .tts-input-row button:active { transform: scale(0.95); }
+
+    /* CSS Filters for video */
+    .night-vision { filter: grayscale(1) contrast(1.2) brightness(1.1) sepia(1) hue-rotate(60deg); }
+    .thermal-vision { filter: invert(1) hue-rotate(180deg) saturate(3) contrast(1.5); }
+    .grayscale-vision { filter: grayscale(1) contrast(1.1); }
+    .sepia-vision { filter: sepia(1) contrast(1.1); }
+    .enhance-vision { filter: contrast(1.3) saturate(1.3) brightness(1.1); }
+
+    /* Modals & Toast */
+    #toastContainer { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 10000; display: flex; flex-direction: column; gap: 8px; width: 90%; max-width: 400px; pointer-events: none; }
+    .toast { background: var(--panel-strong); backdrop-filter: blur(12px); color: var(--text); padding: 14px 20px; border-radius: 16px; font-weight: 500; font-size: 0.9rem; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid var(--line); animation: slide-down 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    .toast.error { border-bottom: 3px solid var(--ember); }
+    .toast.success { border-bottom: 3px solid var(--accent); }
+    .toast.fade-out { animation: slide-up 0.3s forwards; }
+
+    @keyframes slide-down { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slide-up { to { opacity: 0; transform: translateY(-20px); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(2,3,5,0.82); backdrop-filter: blur(8px); z-index: 200; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s; padding: 20px; }
+    .modal-backdrop.open { opacity: 1; pointer-events: auto; }
+    .modal-content { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 26px; width: 100%; max-width: 400px; padding: 24px; position: relative; transform: translateY(20px) scale(0.95); transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .modal-backdrop.open .modal-content { transform: translateY(0) scale(1); }
+    .modal-close { position: absolute; top: 16px; right: 16px; background: rgba(255,255,255,0.08); border: none; color: var(--text); width: 32px; height: 32px; border-radius: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .modal-title { font-family: var(--font-display); font-size: 1.2rem; font-weight: 600; margin-bottom: 20px; }
+    .screenshot-img { width: 100%; border-radius: 16px; border: 1px solid var(--line); display: block; margin-bottom: 20px; background: #000; min-height: 200px; object-fit: contain; }
+    .modal-actions { display: flex; gap: 12px; }
+    .modal-btn { flex: 1; padding: 14px; border-radius: 16px; border: none; font-weight: 600; font-size: 0.95rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text); background: rgba(255,255,255,0.08); transition: transform 0.2s; }
+    .modal-btn.primary { background: var(--accent); color: #03150d; }
+    .modal-btn:active { transform: scale(0.95); }
+    .video-msg-preview { width: 100%; border-radius: 16px; background: #000; border: 1px solid var(--line); aspect-ratio: 4/3; margin-bottom: 16px; object-fit: cover; }
+    .msg-status { text-align: center; font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-bottom: 20px; min-height: 20px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <div id="toastContainer"></div>
+
+  <div class="dashboard-layout">
+    
+    <!-- Header -->
+    <header class="top-nav">
+      <div class="logo-container">
+        <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <div class="logo-text">परिवार सुरक्षा</div>
+      </div>
+      <div class="top-actions">
+        <div class="nav-pill" id="batteryBadge">
+          <svg viewBox="0 0 24 24"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"/><line x1="22" y1="11" x2="22" y2="13"/></svg>
+          <span id="batteryText">--%</span>
+        </div>
+        <div class="nav-pill" id="passkeySetupBtn" title="Setup Passkey">
+          <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        </div>
+        <div class="nav-pill" id="installAppBtn" style="display: none;" title="Install App">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+      </div>
+    </header>
+
+    <!-- Video Feed Hero -->
+    <section class="video-hero" id="videoContainer">
+      <div class="video-placeholder" id="videoPlaceholder">
+        <svg viewBox="0 0 24 24"><path d="M2 12A10 10 0 0 0 15 21.54A10 10 0 0 1 15 2.46A10 10 0 0 0 2 12Z"/></svg>
+        <p>क्यामेरा बन्द छ (Camera Offline)</p>
+      </div>
+
+      <video id="videoFeed" class="video-feed hidden" autoplay playsinline muted></video>
+      <img id="mjpegFeed" class="video-feed hidden" alt="Live Feed">
+
+      <div class="video-overlay-top">
+        <div class="status-badge offline" id="liveBadge">OFFLINE</div>
+        <div class="filter-wrapper hidden" id="filterWrapper">
+          <select class="filter-select" id="filterSelect">
+            <option value="normal">Normal</option>
+            <option value="night">Night Vision</option>
+            <option value="thermal">Thermal</option>
+            <option value="grayscale">Grayscale</option>
+            <option value="sepia">Sepia</option>
+            <option value="enhance">Enhance</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="video-overlay-bottom">
+        <button class="fab hidden" id="zoomResetBtn" title="Reset Zoom" style="background: var(--panel-strong); color: white; backdrop-filter: blur(12px);">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </button>
+        <button class="fab" id="liveToggleBtn" title="Start/Stop Feed">
+          <svg id="liveIcon" viewBox="0 0 24 24" style="margin-left: 2px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <div class="spinner hidden" id="liveSpinner"></div>
+        </button>
+      </div>
+    </section>
+
+    <!-- Controls Dashboard -->
+    <div class="section-title">Smart Controls</div>
+    <section class="control-grid">
+      
+      <div class="control-card walkie" id="walkieTalkieBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg></div>
+        <div>
+          <div class="card-title">Walkie Talkie</div>
+          <div class="card-subtitle">Hold to talk</div>
+        </div>
+      </div>
+
+      <div class="control-card" id="screenshotBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></div>
+        <div>
+          <div class="card-title">Screenshot</div>
+          <div class="card-subtitle">Capture frame</div>
+        </div>
+      </div>
+
+      <div class="control-card" id="videoMsgBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg></div>
+        <div>
+          <div class="card-title">Video Message</div>
+          <div class="card-subtitle">Record and send</div>
+        </div>
+      </div>
+
+      <div class="control-card" id="muteBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></div>
+        <div>
+          <div class="card-title">Mute PC</div>
+          <div class="card-subtitle">Toggle host audio</div>
+        </div>
+      </div>
+
+      <div class="control-card" id="lockBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <div>
+          <div class="card-title">Lock PC</div>
+          <div class="card-subtitle">Secure host machine</div>
+        </div>
+      </div>
+
+      <div class="control-card danger" id="sirenBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18.63 13A17.89 17.89 0 0 1 18 8"/><path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M18 8a6 6 0 0 0-9.33-5"/><line x1="1" y1="1" x2="23" y2="23"/></svg></div>
+        <div>
+          <div class="card-title">Sound Siren</div>
+          <div class="card-subtitle">Play loud alarm</div>
+        </div>
+      </div>
+
+      <div class="control-card danger" id="closeAppBtn">
+        <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></div>
+        <div>
+          <div class="card-title">Close Server</div>
+          <div class="card-subtitle">Shutdown system</div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- TTS Section -->
+    <div class="section-title">Voice Broadcast</div>
+    <div class="control-card large">
+      <div class="card-icon"><svg viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></div>
+      <div class="card-content">
+        <div>
+          <div class="card-title">Text to Speech</div>
+          <div class="card-subtitle">Speak directly through the host computer</div>
+        </div>
+        <div class="tts-input-row">
+          <input type="text" id="ttsInput" placeholder="Type a message...">
+          <button id="ttsBtn">Send</button>
+        </div>
+      </div>
+    </div>
+
+  </div> <!-- End Dashboard Layout -->
+
+  <!-- Screenshot Modal -->
+  <div class="modal-backdrop" id="screenshotModal">
+    <div class="modal-content">
+      <button class="modal-close" id="closeScreenshotBtn"><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <div class="modal-title">स्क्रिनसट</div>
+      <img id="screenshotImage" class="screenshot-img">
+      <div class="modal-actions">
+        <button class="modal-btn" id="screenshotShareBtn">Share</button>
+        <button class="modal-btn primary" id="screenshotDownloadBtn">Download</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Video Message Modal -->
+  <div class="modal-backdrop" id="messageModal">
+    <div class="modal-content">
+      <button class="modal-close" id="closeMessageBtn"><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      <div class="modal-title">भिडियो सन्देश</div>
+      <video id="messagePreview" class="video-msg-preview" playsinline muted></video>
+      <div class="msg-status" id="messageStatus">पठाउनको लागि रेकर्ड गर्नुहोस्</div>
+      <button class="modal-btn primary" style="width: 100%;" id="recMsgBtn">🔴 रेकर्ड सुरु गर्नुहोस्</button>
+      <button class="modal-btn hidden" style="width: 100%; background: var(--ember); border:none; color:white;" id="stopMsgBtn">⬛ रोक्नुहोस्</button>
+      <button class="modal-btn primary hidden" style="width: 100%;" id="sendMsgBtn">
+        <span>पठाउनुहोस्</span>
+        <div class="spinner hidden" id="sendSpinner"></div>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/static/sw.js").catch(()=>{});
+
+    function showToast(msg, type = "success") {
+      const t = document.createElement("div");
+      t.className = `toast ${type}`;
+      t.innerHTML = `<span>${msg}</span>`;
+      document.getElementById("toastContainer").appendChild(t);
+      setTimeout(() => { t.classList.add("fade-out"); setTimeout(() => t.remove(), 300); }, 3500);
+    }
+
+    // Battery
+    async function updateBattery() {
+      try {
+        const res = await fetch("/battery");
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById("batteryText").textContent = `${data.battery}%`;
+          const badge = document.getElementById("batteryBadge");
+          badge.classList.remove("hidden");
+          if (data.charging) badge.classList.add("charging"); else badge.classList.remove("charging");
+        }
+      } catch {}
+    }
+    updateBattery(); setInterval(updateBattery, 60000);
+
+    // Remote Actions
+    async function remoteAction(url, successMsg) {
+      try {
+        const res = await fetch(url, { method: "POST" });
+        if (res.ok) showToast(successMsg, "success");
+        else showToast("कार्य असफल भयो।", "error");
+      } catch { showToast("सम्पर्क हुन सकेन।", "error"); }
+    }
+
+    document.getElementById("muteBtn").onclick = () => remoteAction("/control/mute", "आवाज म्युट/अनम्युट गरियो।");
+    document.getElementById("lockBtn").onclick = () => remoteAction("/control/lock", "PC लक गरियो।");
+    document.getElementById("closeAppBtn").onclick = () => { if(confirm("सर्भर बन्द गर्न चाहनुहुन्छ?")) remoteAction("/control/close_app", "सर्भर बन्द गरियो।"); };
+    document.getElementById("sirenBtn").onclick = () => { if(confirm("साइरन बजाउन चाहनुहुन्छ?")) remoteAction("/control/siren", "🚨 साइरन बज्दैछ!"); };
+
+    // TTS
+    document.getElementById("ttsBtn").onclick = async () => {
+      const text = document.getElementById("ttsInput").value.trim();
+      if (!text) return;
+      document.getElementById("ttsBtn").disabled = true;
+      try {
+        const res = await fetch("/control/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+        if (res.ok) { showToast("सन्देश बोलियो।", "success"); document.getElementById("ttsInput").value = ""; }
+      } catch {}
+      finally { document.getElementById("ttsBtn").disabled = false; }
+    };
+
+    // Screenshot
+    let ssUrl = null;
+    document.getElementById("screenshotBtn").onclick = async () => {
+      document.getElementById("screenshotModal").classList.add("open");
+      document.getElementById("screenshotImage").removeAttribute("src");
+      try {
+        const res = await fetch("/desktop/screenshot", { method: "POST" });
+        if (!res.ok) throw new Error();
+        const blob = await res.blob();
+        if (ssUrl) URL.revokeObjectURL(ssUrl);
+        ssUrl = URL.createObjectURL(blob);
+        document.getElementById("screenshotImage").src = ssUrl;
+      } catch { showToast("फोटो लिन असफल।", "error"); document.getElementById("screenshotModal").classList.remove("open"); }
+    };
+    document.getElementById("closeScreenshotBtn").onclick = () => document.getElementById("screenshotModal").classList.remove("open");
+    document.getElementById("screenshotDownloadBtn").onclick = () => {
+      if (!ssUrl) return;
+      const a = document.createElement("a"); a.href = ssUrl; a.download = `screenshot_${Date.now()}.png`; a.click();
+    };
+    document.getElementById("screenshotShareBtn").onclick = async () => {
+      if (!ssUrl || !navigator.share) return;
+      const blob = await (await fetch(ssUrl)).blob();
+      navigator.share({ files: [new File([blob], "screenshot.png", { type: "image/png" })] }).catch(()=>{});
+    };
+
+    // Video Message
+    let msgStream = null, msgRecorder = null, msgChunks = [], msgBlob = null;
+    document.getElementById("videoMsgBtn").onclick = () => {
+      document.getElementById("messageModal").classList.add("open");
+      document.getElementById("recMsgBtn").classList.remove("hidden");
+      document.getElementById("stopMsgBtn").classList.add("hidden");
+      document.getElementById("sendMsgBtn").classList.add("hidden");
+      document.getElementById("messagePreview").srcObject = null;
+      document.getElementById("messagePreview").src = "";
+      document.getElementById("messageStatus").textContent = "पठाउनको लागि रेकर्ड गर्नुहोस्";
+    };
+    document.getElementById("closeMessageBtn").onclick = () => {
+      document.getElementById("messageModal").classList.remove("open");
+      if (msgRecorder && msgRecorder.state !== "inactive") msgRecorder.stop();
+      if (msgStream) msgStream.getTracks().forEach(t => t.stop());
+    };
+    document.getElementById("recMsgBtn").onclick = async () => {
+      try {
+        msgStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        msgRecorder = new MediaRecorder(msgStream);
+        msgChunks = [];
+        msgRecorder.ondataavailable = e => msgChunks.push(e.data);
+        msgRecorder.onstop = () => {
+          msgStream.getTracks().forEach(t => t.stop());
+          msgBlob = new Blob(msgChunks, { type: "video/webm" });
+          document.getElementById("messagePreview").srcObject = null;
+          document.getElementById("messagePreview").src = URL.createObjectURL(msgBlob);
+          document.getElementById("messagePreview").controls = true;
+          document.getElementById("stopMsgBtn").classList.add("hidden");
+          document.getElementById("sendMsgBtn").classList.remove("hidden");
+          document.getElementById("messageStatus").textContent = "तयार छ। अब पठाउनुहोस्।";
+        };
+        document.getElementById("messagePreview").srcObject = msgStream;
+        document.getElementById("messagePreview").play();
+        msgRecorder.start();
+        document.getElementById("recMsgBtn").classList.add("hidden");
+        document.getElementById("stopMsgBtn").classList.remove("hidden");
+        document.getElementById("messageStatus").textContent = "🔴 रेकर्ड हुँदैछ...";
+      } catch { showToast("क्यामेरा अनुमति छैन।", "error"); }
+    };
+    document.getElementById("stopMsgBtn").onclick = () => { if (msgRecorder) msgRecorder.stop(); };
+    document.getElementById("sendMsgBtn").onclick = async () => {
+      if (!msgBlob) return;
+      document.getElementById("sendSpinner").classList.remove("hidden");
+      document.getElementById("sendMsgBtn").style.pointerEvents = "none";
+      try {
+        const fd = new FormData(); fd.append("file", msgBlob, "msg.webm");
+        const res = await fetch("/message/video", { method: "POST", body: fd });
+        if (res.ok) { showToast("सन्देश पठाइयो!", "success"); document.getElementById("messageModal").classList.remove("open"); }
+      } catch { showToast("पठाउन असफल।", "error"); }
+      finally { document.getElementById("sendSpinner").classList.add("hidden"); document.getElementById("sendMsgBtn").style.pointerEvents = "auto"; }
+    };
+
+    // Walkie Talkie
+    let walkieRecorder = null, walkieChunks = [], isRecordingWalkie = false;
+    const walkieBtn = document.getElementById("walkieTalkieBtn");
+    async function startWalkie() {
+      if (isRecordingWalkie) return;
+      isRecordingWalkie = true; walkieChunks = [];
+      walkieBtn.classList.add("active");
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        walkieRecorder = new MediaRecorder(stream);
+        walkieRecorder.ondataavailable = e => walkieChunks.push(e.data);
+        walkieRecorder.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          walkieBtn.classList.remove("active");
+          const audioBlob = new Blob(walkieChunks, { type: "audio/webm" });
+          if (audioBlob.size < 1000) return;
+          try {
+            const fd = new FormData(); fd.append("file", audioBlob, "walkie.webm");
+            await fetch("/message/video", { method: "POST", body: fd });
+            showToast("आवाज पठाइयो।", "success");
+          } catch {}
+        };
+        walkieRecorder.start();
+      } catch { walkieBtn.classList.remove("active"); isRecordingWalkie = false; showToast("माइक अनुमति छैन।", "error"); }
+    }
+    function stopWalkie() {
+      if (!isRecordingWalkie) return;
+      isRecordingWalkie = false;
+      if (walkieRecorder && walkieRecorder.state !== "inactive") walkieRecorder.stop();
+    }
+    walkieBtn.addEventListener("pointerdown", e => { e.preventDefault(); walkieBtn.setPointerCapture(e.pointerId); startWalkie(); });
+    walkieBtn.addEventListener("pointerup", e => { e.preventDefault(); stopWalkie(); });
+    walkieBtn.addEventListener("pointercancel", e => { e.preventDefault(); stopWalkie(); });
+
+    // Live Camera & WebRTC
+    let isLive = false, peerConnection = null, peerId = null;
+    const liveBtn = document.getElementById("liveToggleBtn");
+    const videoFeed = document.getElementById("videoFeed");
+    const mjpegFeed = document.getElementById("mjpegFeed");
+    const liveIcon = document.getElementById("liveIcon");
+    const liveSpinner = document.getElementById("liveSpinner");
+    const liveBadge = document.getElementById("liveBadge");
+    const filterWrapper = document.getElementById("filterWrapper");
+    
+    function setLiveUI(state) {
+      if (state === "idle") {
+        isLive = false;
+        liveBtn.classList.remove("active");
+        liveIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+        liveIcon.style.marginLeft = "2px";
+        liveSpinner.classList.add("hidden"); liveIcon.classList.remove("hidden");
+        document.getElementById("videoPlaceholder").classList.remove("hidden");
+        videoFeed.classList.add("hidden"); mjpegFeed.classList.add("hidden");
+        liveBadge.className = "status-badge offline";
+        liveBadge.textContent = "OFFLINE";
+        filterWrapper.classList.add("hidden");
+        document.getElementById("zoomResetBtn").classList.add("hidden");
+      } else if (state === "connecting") {
+        liveIcon.classList.add("hidden"); liveSpinner.classList.remove("hidden");
+      } else if (state === "live") {
+        isLive = true;
+        liveBtn.classList.add("active");
+        liveIcon.innerHTML = '<rect x="6" y="6" width="12" height="12" rx="2"/>';
+        liveIcon.style.marginLeft = "0";
+        liveSpinner.classList.add("hidden"); liveIcon.classList.remove("hidden");
+        document.getElementById("videoPlaceholder").classList.add("hidden");
+        liveBadge.className = "status-badge live";
+        liveBadge.textContent = "LIVE";
+        filterWrapper.classList.remove("hidden");
+        document.getElementById("zoomResetBtn").classList.remove("hidden");
+      }
+    }
+
+    function closePeer() {
+      if (peerConnection) { peerConnection.close(); peerConnection = null; }
+      if (peerId) { fetch("/webrtc/stop", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({peerId}), keepalive:true }).catch(()=>{}); peerId = null; }
+    }
+
+    async function startLive() {
+      closePeer();
+      setLiveUI("connecting");
+      try {
+        const confRes = await fetch("/webrtc/config");
+        if (!confRes.ok) throw new Error();
+        const config = await confRes.json();
+        const pc = new RTCPeerConnection({ iceServers: config.iceServers });
+        peerConnection = pc;
+
+        pc.addEventListener("track", e => { 
+            videoFeed.srcObject = e.streams[0]; 
+            videoFeed.play().catch(()=>{}); 
+            videoFeed.classList.remove("hidden"); 
+        });
+        pc.addEventListener("connectionstatechange", () => {
+          if (pc !== peerConnection) return;
+          if (pc.connectionState === "connected") setLiveUI("live");
+          else if (pc.connectionState === "failed") fallbackToTunnel();
+          else if (pc.connectionState === "closed") setLiveUI("idle");
+        });
+
+        pc.addTransceiver("video", {direction: "recvonly"});
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        if (pc.iceGatheringState !== "complete") {
+          await new Promise(r => {
+            const t = setTimeout(done, 2500);
+            function done() { clearTimeout(t); pc.removeEventListener("icegatheringstatechange", onIce); r(); }
+            function onIce() { if (pc.iceGatheringState === "complete") done(); }
+            pc.addEventListener("icegatheringstatechange", onIce);
+          });
+        }
+
+        const offerRes = await fetch("/webrtc/offer", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(pc.localDescription) });
+        if (!offerRes.ok) throw new Error();
+        const answer = await offerRes.json();
+        peerId = answer.peerId;
+        await pc.setRemoteDescription(answer);
+      } catch { fallbackToTunnel(); }
+    }
+
+    function fallbackToTunnel() {
+      closePeer();
+      videoFeed.classList.add("hidden");
+      const url = `/video?t=${Date.now()}`;
+      mjpegFeed.src = url;
+      mjpegFeed.classList.remove("hidden");
+      setLiveUI("live");
+    }
+
+    liveBtn.onclick = () => { if (isLive) { closePeer(); mjpegFeed.removeAttribute("src"); setLiveUI("idle"); } else startLive(); };
+
+    // PTZ & Zoom
+    let zoom = 1, panX = 0, panY = 0, dragStart = null, lastPointer = null;
+    const vc = document.getElementById("videoContainer");
+    
+    function applyZoom() {
+      zoom = Math.max(1, Math.min(4, zoom));
+      if (zoom === 1) { panX = 0; panY = 0; }
+      const transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      videoFeed.style.transform = transform; mjpegFeed.style.transform = transform;
+    }
+    
+    document.getElementById("zoomResetBtn").onclick = () => { zoom = 1; applyZoom(); };
+    
+    vc.onpointerdown = e => { if (zoom <= 1 || !isLive || e.target.closest(".video-overlay-top") || e.target.closest(".video-overlay-bottom")) return; vc.setPointerCapture(e.pointerId); dragStart = {x: panX, y: panY}; lastPointer = {x: e.clientX, y: e.clientY}; };
+    vc.onpointermove = e => { if (!dragStart) return; panX = dragStart.x + e.clientX - lastPointer.x; panY = dragStart.y + e.clientY - lastPointer.y; applyZoom(); };
+    vc.onpointerup = vc.onpointercancel = () => { dragStart = null; };
+    
+    let lastTap = 0;
+    vc.addEventListener("click", e => {
+      if (!isLive || e.target.closest('.video-overlay-top') || e.target.closest('.video-overlay-bottom')) return;
+      const now = Date.now();
+      if (now - lastTap < 300 && now - lastTap > 0) {
+        if (zoom > 1) { zoom = 1; applyZoom(); }
+        else {
+          zoom = 2.5;
+          const rect = vc.getBoundingClientRect();
+          panX = (rect.width / 2 - (e.clientX - rect.left)) * 1.5;
+          panY = (rect.height / 2 - (e.clientY - rect.top)) * 1.5;
+          applyZoom();
+        }
+      }
+      lastTap = now;
+    });
+
+    // Filters
+    document.getElementById("filterSelect").addEventListener("change", async e => {
+      const v = e.target.value;
+      videoFeed.className = "video-feed"; mjpegFeed.className = "video-feed";
+      if (!videoFeed.classList.contains("hidden")) {} else if (isLive) mjpegFeed.classList.remove("hidden");
+      const map = { night: "night-vision", thermal: "thermal-vision", grayscale: "grayscale-vision", sepia: "sepia-vision", enhance: "enhance-vision" };
+      if (map[v]) { videoFeed.classList.add(map[v]); mjpegFeed.classList.add(map[v]); }
+      try { await fetch("/api/settings/filter", { method: "POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({filter: v}) }); } catch {}
+    });
+
+    // Install
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; document.getElementById("installAppBtn").style.display = "flex"; });
+    document.getElementById("installAppBtn").onclick = async () => { if (!deferredPrompt) return; deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null; document.getElementById("installAppBtn").style.display = "none"; };
+
+    // Passkeys
+    document.getElementById("passkeySetupBtn").onclick = async () => {
+      if (!window.PublicKeyCredential) { showToast("Passkeys not supported", "error"); return; }
+      try {
+        const optRes = await fetch("/passkey/register/options", { method: "POST" });
+        if (!optRes.ok) throw new Error();
+        const options = await optRes.json();
+        options.challenge = Uint8Array.from(atob(options.challenge.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)).buffer;
+        options.user.id = Uint8Array.from(atob(options.user.id.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)).buffer;
+        const credential = await navigator.credentials.create({ publicKey: options });
+        const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const credJSON = { id: credential.id, rawId: b64(credential.rawId), type: credential.type, response: { clientDataJSON: b64(credential.response.clientDataJSON), attestationObject: b64(credential.response.attestationObject) } };
+        const verRes = await fetch("/passkey/register/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(credJSON) });
+        if (!verRes.ok) throw new Error();
+        showToast("Passkey Setup Complete!", "success");
+      } catch { showToast("Setup Failed", "error"); }
+    };
+  </script>
+</body>
+</html>

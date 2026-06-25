@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Family CCTV</title>
+  <desc id="desc">A shield with a camera lens and heart for family safety.</desc>
+  <defs>
+    <linearGradient id="bg" x1="88" x2="424" y1="70" y2="442" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34d399"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <linearGradient id="lens" x1="180" x2="332" y1="188" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e0f2fe"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0f172a"/>
+  <path d="M256 58 403 113v111c0 104-63 178-147 230-84-52-147-126-147-230V113L256 58Z" fill="url(#bg)"/>
+  <path d="M158 205c0-24 19-43 43-43h18l14-24h46l14 24h18c24 0 43 19 43 43v102c0 24-19 43-43 43H201c-24 0-43-19-43-43V205Z" fill="#f8fafc"/>
+  <circle cx="256" cy="260" r="70" fill="#0f172a"/>
+  <circle cx="256" cy="260" r="47" fill="url(#lens)"/>
+  <circle cx="274" cy="241" r="14" fill="#ffffff" opacity=".9"/>
+  <path d="M256 355c-31-22-56-42-56-68 0-17 12-29 28-29 12 0 22 7 28 17 6-10 16-17 28-17 16 0 28 12 28 29 0 26-25 46-56 68Z" fill="#fb7185"/>
+</svg>
